@@ -1,0 +1,6 @@
+# Copy to application-local.properties for local development only.
+# application-local.properties is intentionally ignored by Git.
+TRADEMASTER_DB_URL=jdbc:mysql://localhost:3306/trademaster
+TRADEMASTER_DB_USERNAME=root
+TRADEMASTER_DB_PASSWORD=replace-with-local-database-password
+TRADEMASTER_JWT_SECRET=replace-with-a-random-secret-containing-at-least-64-characters-00000000
