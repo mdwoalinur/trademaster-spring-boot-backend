@@ -18,7 +18,7 @@ This backend is designed to work with the TradeMaster Angular frontend.
 
 ## Related Repository
 
-- Angular Frontend: https://github.com/mdwoalinur/trademaster-angular
+https://github.com/mdwoalinur/trademaster-angular-frontend
 
 ## Main Features
 
