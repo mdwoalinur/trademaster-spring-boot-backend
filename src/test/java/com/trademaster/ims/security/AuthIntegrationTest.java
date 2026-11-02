@@ -3,6 +3,7 @@ package com.trademaster.ims.security;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.trademaster.ims.config.SecurityConfig;
+import com.trademaster.ims.config.WebConfig;
 import com.trademaster.ims.controller.AuthController;
 import com.trademaster.ims.model.Role;
 import com.trademaster.ims.model.User;
@@ -14,6 +15,8 @@ import com.trademaster.ims.service.ForgotPasswordService;
 import com.trademaster.ims.service.ProfileService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.autoconfigure.EnableAutoConfiguration;
@@ -31,6 +34,8 @@ import org.springframework.test.context.DynamicPropertySource;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.RestController;
+import org.springframework.web.bind.annotation.CrossOrigin;
+import org.springframework.web.bind.annotation.RequestMapping;
 import io.jsonwebtoken.Jwts;
 import io.jsonwebtoken.SignatureAlgorithm;
 import io.jsonwebtoken.security.Keys;
@@ -62,7 +67,7 @@ public class AuthIntegrationTest {
             "org.springframework.boot.jdbc.autoconfigure.DataSourceAutoConfiguration",
             "org.springframework.boot.hibernate.autoconfigure.HibernateJpaAutoConfiguration",
             "org.springframework.boot.data.jpa.autoconfigure.DataJpaRepositoriesAutoConfiguration"})
-    @Import({SecurityConfig.class, AuthController.class, UserDetailsServiceImpl.class,
+    @Import({SecurityConfig.class, WebConfig.class, AuthController.class, UserDetailsServiceImpl.class,
             JwtUtils.class, AuditLogService.class, RoleProbe.class})
     public static class TestApplication {
     }
@@ -75,10 +80,16 @@ public class AuthIntegrationTest {
 
     @RestController
     @Profile("auth-integration")
+    @CrossOrigin(origins = "http://localhost:4200") // Existing controller annotations must merge with the global policy.
     static class RoleProbe {
         @GetMapping("/test/super-admin")
         @PreAuthorize("hasRole('SUPER_ADMIN')")
         public Map<String, Boolean> superAdminOnly() {
+            return Map.of("allowed", true);
+        }
+
+        @RequestMapping("/test/cors-methods")
+        public Map<String, Boolean> corsMethods() {
             return Map.of("allowed", true);
         }
     }
@@ -226,6 +237,93 @@ public class AuthIntegrationTest {
         assertEquals(403, get("/test/super-admin", token).statusCode());
     }
 
+    @ParameterizedTest
+    @ValueSource(strings = {"https://trademaster-angular-frontend.vercel.app", "http://localhost:4200"})
+    void allowedOriginPreflightDoesNotRequireJwt(String origin) throws Exception {
+        var loginPreflight = preflight("/api/auth/login", origin, "POST", "content-type");
+        assertEquals(200, loginPreflight.statusCode());
+        assertCorsAllowed(loginPreflight, origin);
+        assertTrue(loginPreflight.headers().firstValue("Access-Control-Allow-Methods").orElse("").contains("POST"));
+
+        var protectedPreflight = preflight("/api/auth/me", origin, "GET", "authorization,content-type");
+        assertEquals(200, protectedPreflight.statusCode());
+        assertCorsAllowed(protectedPreflight, origin);
+        String allowedHeaders = protectedPreflight.headers().firstValue("Access-Control-Allow-Headers")
+                .orElse("").toLowerCase(java.util.Locale.ROOT);
+        assertTrue(allowedHeaders.contains("authorization"));
+        assertTrue(allowedHeaders.contains("content-type"));
+        verify(users, never()).findByUsername(any());
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {"https://trademaster-angular-frontend.vercel.app", "http://localhost:4200"})
+    void allowedOriginCanLogInAndMakeJwtAuthenticatedRequests(String origin) throws Exception {
+        var loginResponse = login("admin", password, origin);
+        assertEquals(200, loginResponse.statusCode());
+        assertCorsAllowed(loginResponse, origin);
+        String token = json.readTree(loginResponse.body()).path("token").asText();
+        assertTrue(jwtUtils.validateJwtToken(token));
+
+        var profileResponse = get("/api/auth/me", token, origin);
+        assertEquals(200, profileResponse.statusCode());
+        assertCorsAllowed(profileResponse, origin);
+        assertEquals("admin", json.readTree(profileResponse.body()).path("username").asText());
+
+        var annotatedControllerResponse = get("/test/super-admin", token, origin);
+        assertEquals(200, annotatedControllerResponse.statusCode());
+        assertCorsAllowed(annotatedControllerResponse, origin);
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {"https://trademaster-angular-frontend.vercel.app", "http://localhost:4200"})
+    void allowedOriginStillRequiresValidCredentialsAndJwt(String origin) throws Exception {
+        var badLogin = login("admin", UUID.randomUUID().toString(), origin);
+        assertLoginFailure(badLogin);
+        assertCorsAllowed(badLogin, origin);
+        for (String token : new String[]{null, "invalid-token"}) {
+            var response = get("/api/auth/me", token, origin);
+            assertEquals(401, response.statusCode());
+            assertCorsAllowed(response, origin);
+        }
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {"https://untrusted.example", "https://trademaster-angular-frontend.vercel.app.evil.example",
+            "https://preview-trademaster-angular-frontend.vercel.app", "null"})
+    void unlistedOriginsAreRejectedForPreflightAndAuthenticatedRequests(String origin) throws Exception {
+        var options = preflight("/api/auth/me", origin, "GET", "authorization");
+        assertEquals(403, options.statusCode());
+        assertTrue(options.headers().firstValue("Access-Control-Allow-Origin").isEmpty());
+
+        String token = json.readTree(login("admin", password).body()).path("token").asText();
+        var actual = get("/api/auth/me", token, origin);
+        assertEquals(403, actual.statusCode());
+        assertTrue(actual.headers().firstValue("Access-Control-Allow-Origin").isEmpty());
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {"GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"})
+    void productionPreflightPreservesSupportedHttpMethods(String method) throws Exception {
+        String origin = "https://trademaster-angular-frontend.vercel.app";
+        var response = preflight("/test/cors-methods", origin, method, "authorization,content-type,x-requested-with");
+        assertEquals(200, response.statusCode());
+        assertCorsAllowed(response, origin);
+        assertTrue(java.util.Arrays.asList(response.headers().firstValue("Access-Control-Allow-Methods")
+                .orElse("").split(",\\s*")).contains(method));
+    }
+
+    private void assertCorsAllowed(HttpResponse<String> response, String origin) {
+        assertEquals(java.util.List.of(origin), response.headers().allValues("Access-Control-Allow-Origin"));
+        assertEquals("true", response.headers().firstValue("Access-Control-Allow-Credentials").orElse(""));
+    }
+
+    private HttpResponse<String> preflight(String path, String origin, String method, String headers) throws Exception {
+        return http.send(HttpRequest.newBuilder(uri(path)).header("Origin", origin)
+                .header("Access-Control-Request-Method", method)
+                .header("Access-Control-Request-Headers", headers)
+                .method("OPTIONS", HttpRequest.BodyPublishers.noBody()).build(), HttpResponse.BodyHandlers.ofString());
+    }
+
     private void assertLoginFailure(HttpResponse<String> response) throws Exception {
         assertEquals(401, response.statusCode());
         assertTrue(response.headers().firstValue("content-type").orElse("").startsWith("application/json"));
@@ -233,16 +331,26 @@ public class AuthIntegrationTest {
     }
 
     private HttpResponse<String> login(String username, String submittedPassword) throws Exception {
-        return http.send(HttpRequest.newBuilder(uri("/api/auth/login"))
-                .header("Content-Type", "application/json")
+        return login(username, submittedPassword, null);
+    }
+
+    private HttpResponse<String> login(String username, String submittedPassword, String origin) throws Exception {
+        var builder = HttpRequest.newBuilder(uri("/api/auth/login")).header("Content-Type", "application/json");
+        if (origin != null) builder.header("Origin", origin);
+        return http.send(builder
                 .POST(HttpRequest.BodyPublishers.ofString(json.writeValueAsString(
                         Map.of("username", username, "password", submittedPassword))))
                 .build(), HttpResponse.BodyHandlers.ofString());
     }
 
     private HttpResponse<String> get(String path, String token) throws Exception {
+        return get(path, token, null);
+    }
+
+    private HttpResponse<String> get(String path, String token, String origin) throws Exception {
         var builder = HttpRequest.newBuilder(uri(path));
         if (token != null) builder.header("Authorization", "Bearer " + token);
+        if (origin != null) builder.header("Origin", origin);
         return http.send(builder.GET().build(), HttpResponse.BodyHandlers.ofString());
     }
 

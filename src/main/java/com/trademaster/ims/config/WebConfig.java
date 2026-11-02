@@ -16,12 +16,12 @@ public class WebConfig implements WebMvcConfigurer {
     private final Path supplierUploadDir = Paths.get("uploads", "suppliers").toAbsolutePath().normalize();
     private final Path productVariationUploadDir = Paths.get("uploads", "product-variations").toAbsolutePath().normalize();
 
-    // CORS Configuration (existing)
+    // Shared by Spring MVC and Spring Security, including uploaded-file resource handlers.
     @Override
     public void addCorsMappings(CorsRegistry registry) {
-        registry.addMapping("/api/**")
-                .allowedOrigins("http://localhost:4200")
-                .allowedMethods("GET", "POST", "PUT", "DELETE", "OPTIONS")
+        registry.addMapping("/**")
+                .allowedOrigins("https://trademaster-angular-frontend.vercel.app", "http://localhost:4200")
+                .allowedMethods("GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS")
                 .allowedHeaders("*")
                 .allowCredentials(true);
     }

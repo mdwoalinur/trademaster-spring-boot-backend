@@ -69,13 +69,25 @@ class TrademasterImsApplicationTests {
 		user.setPasswordHash(encoder.encode(password));
 		user = users.saveAndFlush(user);
 		ObjectMapper json = new ObjectMapper();
-		var response = HttpClient.newHttpClient().send(HttpRequest.newBuilder(
+		HttpClient client = HttpClient.newHttpClient();
+		String origin = "https://trademaster-angular-frontend.vercel.app";
+		var preflight = client.send(HttpRequest.newBuilder(
+				URI.create("http://localhost:" + port + "/api/categories"))
+				.header("Origin", origin)
+				.header("Access-Control-Request-Method", "GET")
+				.header("Access-Control-Request-Headers", "authorization,content-type")
+				.method("OPTIONS", HttpRequest.BodyPublishers.noBody()).build(), HttpResponse.BodyHandlers.ofString());
+		assertEquals(200, preflight.statusCode());
+		assertEquals(origin, preflight.headers().firstValue("Access-Control-Allow-Origin").orElse(""));
+		var response = client.send(HttpRequest.newBuilder(
 				URI.create("http://localhost:" + port + "/api/auth/login"))
 				.header("Content-Type", "application/json")
+				.header("Origin", origin)
 				.POST(HttpRequest.BodyPublishers.ofString(json.writeValueAsString(
 						Map.of("username", user.getUsername(), "password", password))))
 				.build(), HttpResponse.BodyHandlers.ofString());
 		assertEquals(200, response.statusCode());
+		assertEquals(origin, response.headers().firstValue("Access-Control-Allow-Origin").orElse(""));
 		var body = json.readTree(response.body());
 		assertEquals(user.getUserId(), body.path("userId").longValue());
 		assertEquals("SUPER_ADMIN", body.path("roleName").asText());
@@ -84,6 +96,13 @@ class TrademasterImsApplicationTests {
 		assertFalse(body.path("token").asText().isBlank());
 		assertFalse(body.has("passwordHash"));
 		assertNotNull(users.findById(user.getUserId()).orElseThrow().getLastLogin());
+		var categories = client.send(HttpRequest.newBuilder(
+				URI.create("http://localhost:" + port + "/api/categories"))
+				.header("Origin", origin)
+				.header("Authorization", "Bearer " + body.path("token").asText())
+				.GET().build(), HttpResponse.BodyHandlers.ofString());
+		assertEquals(200, categories.statusCode());
+		assertEquals(origin, categories.headers().firstValue("Access-Control-Allow-Origin").orElse(""));
 	}
 
 }
