@@ -22,6 +22,7 @@ import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.util.Map;
+import org.springframework.web.servlet.mvc.method.annotation.RequestMappingHandlerMapping;
 import static org.junit.jupiter.api.Assertions.*;
 
 @SpringBootTest(classes = TrademasterImsApplication.class,
@@ -45,6 +46,7 @@ class TrademasterImsApplicationTests {
 	@Autowired UserRepository users;
 	@Autowired RoleRepository roles;
 	@Autowired PasswordEncoder encoder;
+	@Autowired RequestMappingHandlerMapping handlerMapping;
 	@Value("${local.server.port}") int port;
 	@DynamicPropertySource
 	static void jwtProperties(DynamicPropertyRegistry registry) {
@@ -54,6 +56,73 @@ class TrademasterImsApplicationTests {
 
 	@Test
 	void contextLoads() {
+	}
+
+	@Test
+	void openApiDocumentsAllControllerRoutesAndJwtSecurity() throws Exception {
+		var response = get("/v3/api-docs");
+		assertEquals(200, response.statusCode());
+		var document = new ObjectMapper().readTree(response.body());
+		assertTrue(document.path("openapi").asText().startsWith("3."));
+		assertEquals("TradeMaster Inventory Management API", document.at("/info/title").asText());
+		assertEquals("http", document.at("/components/securitySchemes/bearerAuth/type").asText());
+		assertEquals("bearer", document.at("/components/securitySchemes/bearerAuth/scheme").asText());
+		assertTrue(document.path("security").get(0).has("bearerAuth"));
+		var paths = document.path("paths");
+		handlerMapping.getHandlerMethods().forEach((mapping, handler) -> {
+			if (!handler.getBeanType().getPackageName().equals("com.trademaster.ims.controller")) return;
+			for (String pattern : mapping.getPatternValues()) {
+				String path = pattern.replaceAll("\\{([^}:]+):[^}]+}", "{$1}");
+				assertTrue(paths.has(path), "Missing documented route: " + path);
+				mapping.getMethodsCondition().getMethods().forEach(method ->
+						assertTrue(paths.path(path).has(method.name().toLowerCase(java.util.Locale.ROOT)),
+								"Missing documented operation: " + method + " " + path));
+			}
+		});
+		assertTrue(document.at("/components/schemas/Product").isObject());
+		assertTrue(paths.path("/api/products/{id}").path("get").path("parameters").isArray());
+		assertTrue(paths.path("/api/products").path("post").path("requestBody")
+				.path("content").has("multipart/form-data"));
+
+		for (String path : new String[]{"/api/auth/login", "/api/auth/forgot-password/request-otp",
+				"/api/auth/forgot-password/resend-otp", "/api/auth/forgot-password/verify-otp",
+				"/api/auth/forgot-password/reset"}) {
+			var operation = paths.path(path).path("post");
+			assertTrue(operation.path("security").isArray(), "Public security override missing: " + path);
+			assertTrue(operation.path("security").isEmpty(), "Public operation requires JWT: " + path);
+			var content = operation.path("requestBody").path("content").path("application/json");
+			assertTrue(content.has("example") || content.path("examples").isObject(),
+					"Request example missing: " + path);
+		}
+		assertTrue(paths.path("/api/files/profiles/{fileName}").path("get").path("security").isEmpty());
+		var profile = paths.path("/api/auth/me").path("get");
+		assertFalse(profile.has("security") && profile.path("security").isEmpty());
+	}
+
+	@Test
+	void swaggerUiAndItsResourcesArePublicWhileApiRemainsProtected() throws Exception {
+		var redirect = get("/swagger-ui.html");
+		assertEquals(302, redirect.statusCode());
+		assertTrue(redirect.headers().firstValue("location").orElse("").endsWith("/swagger-ui/index.html"));
+		var page = get("/swagger-ui/index.html");
+		assertEquals(200, page.statusCode());
+		assertTrue(page.body().contains("swagger-ui-bundle.js"));
+		for (String asset : new String[]{"swagger-ui-bundle.js", "swagger-ui.css", "swagger-initializer.js"}) {
+			assertEquals(200, get("/swagger-ui/" + asset).statusCode(), asset);
+		}
+		var config = get("/v3/api-docs/swagger-config");
+		assertEquals(200, config.statusCode());
+		assertEquals("/v3/api-docs", new ObjectMapper().readTree(config.body()).path("url").asText());
+		var yaml = get("/v3/api-docs.yaml");
+		assertEquals(200, yaml.statusCode());
+		assertTrue(yaml.body().contains("openapi:"));
+		assertEquals(401, get("/api/products").statusCode());
+		assertEquals(401, get("/api/auth/me").statusCode());
+	}
+
+	private HttpResponse<String> get(String path) throws Exception {
+		return HttpClient.newHttpClient().send(HttpRequest.newBuilder(
+				URI.create("http://localhost:" + port + path)).GET().build(), HttpResponse.BodyHandlers.ofString());
 	}
 
 	@Test

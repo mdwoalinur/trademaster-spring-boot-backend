@@ -58,6 +58,8 @@ public class SecurityConfig {
             .authorizeHttpRequests(auth -> auth
                 // Let Boot render the original error status; direct requests to /error remain protected.
                 .dispatcherTypeMatchers(DispatcherType.ERROR).permitAll()
+                .requestMatchers(HttpMethod.GET, "/swagger-ui.html", "/swagger-ui/**",
+                        "/v3/api-docs", "/v3/api-docs/**", "/v3/api-docs.yaml").permitAll()
                 .requestMatchers(HttpMethod.POST, "/api/auth/login").permitAll()
                 .requestMatchers(HttpMethod.POST, "/api/auth/forgot-password/request-otp").permitAll()
                 .requestMatchers(HttpMethod.POST, "/api/auth/forgot-password/resend-otp").permitAll()

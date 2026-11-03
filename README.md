@@ -358,6 +358,36 @@ API permissions are enforced on the backend rather than relying only on frontend
 
 ---
 
+## API Documentation (Swagger / OpenAPI)
+
+Start the backend with Java 17 and the configured database:
+
+```powershell
+.\mvnw.cmd spring-boot:run
+```
+
+- Swagger UI: [http://localhost:8080/swagger-ui.html](http://localhost:8080/swagger-ui.html)
+- OpenAPI JSON: [http://localhost:8080/v3/api-docs](http://localhost:8080/v3/api-docs)
+- OpenAPI YAML: [http://localhost:8080/v3/api-docs.yaml](http://localhost:8080/v3/api-docs.yaml)
+
+Use your backend host and port if they differ. Documentation is generated from the
+controllers in `com.trademaster.ims.controller` for `/api/**` routes, including
+request parameters and model schemas. Controller mappings and OpenAPI annotations
+are the source of truth; add descriptions and examples there as endpoints evolve.
+
+1. Open **Authentication**, expand `POST /api/auth/login`, and select **Try it out**.
+2. Replace the example username and password with your credentials and execute.
+3. Copy the response's `token`, click **Authorize**, and paste the token without
+   the `Bearer` prefix. Swagger UI adds the authorization header to protected requests.
+4. Execute the desired endpoint. Existing role restrictions still apply.
+
+Login, password recovery and profile-image downloads are documented as public.
+Swagger UI and the OpenAPI specification can be read without logging in.
+Set `TRADEMASTER_API_DOCS_ENABLED=false` to disable both documentation endpoints
+and Swagger UI in an environment.
+
+---
+
 ## Authentication and Authorization
 
 TradeMaster uses Spring Security with JWT-based authentication.

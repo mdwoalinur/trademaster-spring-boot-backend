@@ -8,6 +8,12 @@ import com.trademaster.ims.repository.UserRepository;
 import com.trademaster.ims.service.AuditLogService;
 import com.trademaster.ims.service.ForgotPasswordService;
 import com.trademaster.ims.service.ProfileService;
+import io.swagger.v3.oas.annotations.Operation;
+import io.swagger.v3.oas.annotations.media.Content;
+import io.swagger.v3.oas.annotations.media.ExampleObject;
+import io.swagger.v3.oas.annotations.responses.ApiResponse;
+import io.swagger.v3.oas.annotations.security.SecurityRequirements;
+import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.servlet.http.HttpServletRequest;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.ResponseEntity;
@@ -29,6 +35,7 @@ import java.util.Map;
 
 @RestController
 @RequestMapping("/api/auth")
+@Tag(name = "Authentication", description = "JWT login, current user profile and password recovery")
 public class AuthController {
 
     private static final Logger logger = LoggerFactory.getLogger(AuthController.class);
@@ -52,6 +59,17 @@ public class AuthController {
     private AuditLogService auditLogService;
 
     @PostMapping("/login")
+    @SecurityRequirements
+    @Operation(summary = "Log in and obtain a JWT",
+            description = "Returns a token and the user profile. Use the token in Swagger UI's Authorize dialog.",
+            requestBody = @io.swagger.v3.oas.annotations.parameters.RequestBody(required = true,
+                    content = @Content(mediaType = "application/json", examples = @ExampleObject(
+                            value = "{\"username\":\"your-username\",\"password\":\"your-password\"}"))),
+            responses = {
+                    @ApiResponse(responseCode = "200", description = "JWT token and user profile"),
+                    @ApiResponse(responseCode = "401", description = "Invalid credentials or inactive user"),
+                    @ApiResponse(responseCode = "503", description = "Authentication service unavailable")
+            })
     public ResponseEntity<?> authenticateUser(@RequestBody Map<String, String> loginRequest, HttpServletRequest request) {
         String username = loginRequest.get("username");
         String password = loginRequest.get("password");
@@ -89,6 +107,7 @@ public class AuthController {
     }
 
     @GetMapping("/me")
+    @Operation(summary = "Get the authenticated user's profile")
     public ResponseEntity<?> getCurrentUser() {
         Object principal = SecurityContextHolder.getContext().getAuthentication().getPrincipal();
         if (!(principal instanceof UserDetailsImpl)) {
@@ -102,21 +121,44 @@ public class AuthController {
     }
 
     @PostMapping("/forgot-password/request-otp")
+    @SecurityRequirements
+    @Operation(summary = "Request a password reset code",
+            description = "Sends a verification code to the account email when an active account is found.",
+            requestBody = @io.swagger.v3.oas.annotations.parameters.RequestBody(required = true,
+                    content = @Content(mediaType = "application/json", examples = @ExampleObject(
+                            value = "{\"emailOrUsername\":\"your-username\"}"))))
     public ResponseEntity<?> requestForgotPasswordOtp(@RequestBody Map<String, String> request) {
         return handleForgotPassword(() -> forgotPasswordService.requestOtp(request));
     }
 
     @PostMapping("/forgot-password/resend-otp")
+    @SecurityRequirements
+    @Operation(summary = "Resend a password reset code",
+            requestBody = @io.swagger.v3.oas.annotations.parameters.RequestBody(required = true,
+                    content = @Content(mediaType = "application/json", examples = @ExampleObject(
+                            value = "{\"emailOrUsername\":\"your-username\"}"))))
     public ResponseEntity<?> resendForgotPasswordOtp(@RequestBody Map<String, String> request) {
         return handleForgotPassword(() -> forgotPasswordService.resendOtp(request));
     }
 
     @PostMapping("/forgot-password/verify-otp")
+    @SecurityRequirements
+    @Operation(summary = "Verify a password reset code",
+            requestBody = @io.swagger.v3.oas.annotations.parameters.RequestBody(required = true,
+                    content = @Content(mediaType = "application/json", examples = @ExampleObject(
+                            value = "{\"emailOrUsername\":\"your-username\",\"otp\":\"123456\"}"))))
     public ResponseEntity<?> verifyForgotPasswordOtp(@RequestBody Map<String, String> request) {
         return handleForgotPassword(() -> forgotPasswordService.verifyOtp(request));
     }
 
     @PostMapping("/forgot-password/reset")
+    @SecurityRequirements
+    @Operation(summary = "Reset a password using a verified code",
+            description = "Verify the code first, then submit the same code with matching new passwords.",
+            requestBody = @io.swagger.v3.oas.annotations.parameters.RequestBody(required = true,
+                    content = @Content(mediaType = "application/json", examples = @ExampleObject(
+                            value = "{\"emailOrUsername\":\"your-username\",\"otp\":\"123456\","
+                                    + "\"newPassword\":\"your-new-password\",\"confirmPassword\":\"your-new-password\"}"))))
     public ResponseEntity<?> resetForgotPassword(@RequestBody Map<String, String> request) {
         return handleForgotPassword(() -> forgotPasswordService.resetPassword(request));
     }

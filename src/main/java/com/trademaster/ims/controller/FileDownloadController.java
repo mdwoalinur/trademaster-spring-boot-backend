@@ -32,6 +32,7 @@ public class FileDownloadController {
     }
 
     @GetMapping("/profiles/{fileName:.+}")
+    @io.swagger.v3.oas.annotations.security.SecurityRequirements
     public ResponseEntity<Resource> serveProfile(@PathVariable String fileName) {
         if (!userRepository.existsByProfileImageUrlEndingWith("/" + fileName)) {
             return ResponseEntity.notFound().build();
